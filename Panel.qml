@@ -399,47 +399,49 @@ Panel {
         }
       }
     }
-  }
 
-  // ---- Dependencies dialog: the ON gate ------------------------------------
-  //
-  // OmaShield stays OFF until aur-scanner and yay-guard are installed through
-  // the standard procedure. Confirming only dismisses; switching ON again
-  // re-checks.
+    // ---- Dependencies dialog: the ON gate ----------------------------------
+    // Lives inside the popup card (same window layer): OmaShield stays OFF
+    // until aur-scanner and yay-guard are installed through the standard
+    // procedure. Confirming only dismisses; switching ON again re-checks.
 
-  ConfirmDialog {
-    id: depsDialog
-    anchors.fill: parent
-    opened: false
-    message: "OmaShield needs aur-scanner and yay-guard before it can switch ON. " +
-             "Install them through the standard procedure (Main Menu > Install > Package, " +
-             "or yay -S aur-scanner yay-guard), then switch ON again. " +
-             "OmaShield stays OFF until then."
-    cancelText: "Later"
-    confirmText: "Understood"
-    foreground: root.contentForeground
-    fontFamily: root.contentFontFamily
-    onCanceled: depsDialog.opened = false
-    onConfirmed: depsDialog.opened = false
-  }
+    ConfirmDialog {
+      id: depsDialog
+      anchors.fill: parent
+      z: 10
+      opened: false
+      message: "OmaShield needs aur-scanner and yay-guard before it can switch ON. " +
+               "Install them through the standard procedure (Main Menu > Install > Package, " +
+               "or yay -S aur-scanner yay-guard), then switch ON again. " +
+               "OmaShield stays OFF until then."
+      cancelText: "Later"
+      confirmText: "Understood"
+      foreground: root.contentForeground
+      fontFamily: root.contentFontFamily
+      onCanceled: depsDialog.opened = false
+      onConfirmed: depsDialog.opened = false
+    }
 
-  // ---- Confirmation: uninstalling removes every integration, then the ------
-  // ---- plugin itself (the bar icon goes with the shell's disable step). ---
+    // ---- Confirmation: uninstalling removes every integration, then the ----
+    // ---- plugin itself (the bar icon goes with the shell's disable step). -
+    // Also inside the card so it actually renders.
 
-  ConfirmDialog {
-    id: uninstallConfirm
-    anchors.fill: parent
-    opened: false
-    message: "Uninstall OmaShield? This restores the stock " +
-             "Update / Install menu, removes the native yay guard hooks and the " +
-             "omarchy-omashield command, and removes the plugin itself. " +
-             "aur-scanner and yay-guard stay installed."
-    cancelText: "Keep"
-    confirmText: "Uninstall"
-    foreground: root.contentForeground
-    fontFamily: root.contentFontFamily
-    onCanceled: uninstallConfirm.opened = false
-    onConfirmed: root.runUninstall()
+    ConfirmDialog {
+      id: uninstallConfirm
+      anchors.fill: parent
+      z: 10
+      opened: false
+      message: "Uninstall OmaShield? This restores the stock " +
+               "Update / Install menu, removes the native yay guard hooks and the " +
+               "omarchy-omashield command, and removes the plugin itself. " +
+               "aur-scanner and yay-guard stay installed."
+      cancelText: "Keep"
+      confirmText: "Uninstall"
+      foreground: root.contentForeground
+      fontFamily: root.contentFontFamily
+      onCanceled: uninstallConfirm.opened = false
+      onConfirmed: root.runUninstall()
+    }
   }
 
   // ---- Process wiring -----------------------------------------------------

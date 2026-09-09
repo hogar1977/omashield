@@ -222,7 +222,15 @@ cmd_uninstall() {
 
   ok "OmaShield integrations removed. aur-scanner and yay-guard are still installed."
   echo "Removing the plugin itself…"
-  omarchy plugin remove "$PLUGIN_ID" --yes
+  # The panel closes the moment this starts, so report the outcome through a
+  # desktop notification (this binary is PATH-resident and survives the plugin
+  # dir deletion below).
+  if omarchy plugin remove "$PLUGIN_ID" --yes; then
+    omarchy-notification-send "OmaShield" "Uninstalled cleanly. aur-scanner and yay-guard are still installed." >/dev/null 2>&1 || true
+  else
+    omarchy-notification-send "OmaShield" "Uninstall failed — run omarchy-omashield uninstall in a terminal to see why." >/dev/null 2>&1 || true
+    return 1
+  fi
 }
 
 # --- main -------------------------------------------------------------------
