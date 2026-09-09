@@ -1,0 +1,244 @@
+#!/bin/bash
+#
+# OmaShield — main command.
+#
+# Installed as ~/.local/bin/omarchy-omashield. Drives the guarded update and
+# install flows, exposes the ON/OFF switch, reports status for the shell
+# panel, and implements the uninstall action behind the panel's Uninstall
+# button.
+#
+# ON/OFF is a state-file flip. Turning ON refuses (exit 3) while the hard
+# dependencies (aur-scanner, yay-guard) are missing — install them through the
+# standard procedure, then switch ON again. Package installs never happen here
+# (no TTY); they are offered inside the Update/Install terminal flows.
+
+BASE_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+source "$BASE_DIR/lib-state.sh"
+source "$BASE_DIR/lib-gate.sh"
+source "$BASE_DIR/ensure-tools.sh"
+source "$BASE_DIR/guard-update.sh"
+source "$BASE_DIR/guard-install.sh"
+
+# Small helper to print in omarchy's colours.
+info()  { echo -e "\e[1;36m$*\e[0m"; }
+ok()    { echo -e "\e[32m$*\e[0m"; }
+warn()  { echo -e "\e[33m$*\e[0m"; }
+err()   { echo -e "\e[1;31m$*\e[0m" >&2; }
+
+usage() {
+  cat <<EOF
+OmaShield — interactive, scanner-guarded AUR package management for Omarchy.
+
+Usage:  omarchy-omashield <command>
+
+  status                 Show the current state (also used by the shell panel).
+  on / enable            Turn the shield ON (refuses while aur-scanner or
+                         yay-guard are missing).
+  off / disable          Turn the shield OFF (stock omarchy behaviour).
+  set on|off             Same as on/off, for scripted use.
+  update                 Guarded update: pick the repo + AUR set, scan the AUR
+                         picks (aur-scan + yay-guard), greenlight, then run the
+                         full omarchy update with the chosen set.
+  install-aur            Guarded AUR install (Install > AUR override).
+  audit                  Audit all installed AUR packages with both tools.
+  uninstall [--yes]      Remove every OmaShield customization, then remove the
+                         plugin itself (Uninstall button from the panel).
+  help                   Show this help.
+
+  The same command can be produced through the Main Menu: Update > Omarchy
+  and Install > AUR are re-routed here while the shield is ON.
+EOF
+}
+
+# --- status -----------------------------------------------------------------
+
+cmd_status() {
+  local state="off"
+  shield_state_is_on && state="on"
+
+  local scan="missing" audit="missing" hook="absent" menu="stock" widget="unknown" pending=0 pcount
+  command -v aur-scan >/dev/null 2>&1 && scan="installed"
+  aur_audit_bin >/dev/null 2>&1 && audit="installed"
+  if shield_hook_is_ours; then
+    # The hooks are file-present but only run while the shield is ON.
+    if shield_state_is_on; then hook="active"; else hook="suspended"; fi
+  fi
+  if grep -q -e 'omarchy-omashield' -e 'omarchy-aur-shield' "$EXT_MENU" 2>/dev/null; then menu="overridden"; fi
+  widget=$(plugin_widget_enabled)
+  for pcount in "$PENDING_AUR_FILE" "$PENDING_REPO_FILE"; do
+    if [[ -f $pcount ]]; then
+      local plines
+      plines=$(wc -l < "$pcount" 2>/dev/null | tr -d ' ')
+      pending=$((pending + plines))
+    fi
+  done
+
+  printf '%s\n' "state: $state" \
+    "aur-scan: $scan" \
+    "yay-guard: $audit" \
+    "native-hook: $hook" \
+    "menu: $menu" \
+    "widget: $widget" \
+    "pending-updates: $pending" \
+    "plugin-dir: $PLUGIN_DIR"
+}
+
+# --- switch -----------------------------------------------------------------
+
+cmd_set() {
+  case "${1:-}" in
+    on)
+      if ! shield_activate; then
+        local rc=$?
+        if ((rc == 3)); then
+          err "OmaShield needs aur-scanner and yay-guard before it can switch ON."
+          err "Install them through the standard procedure, then switch ON again."
+        fi
+        return $rc
+      fi
+      ok "OmaShield is ON. Menu, hooks and the update stages are guarded again."
+      ;;
+    off)
+      shield_deactivate
+      warn "OmaShield is OFF. The menu, hooks and update stages use the stock omarchy behaviour; everything stays installed."
+      ;;
+    *)
+      err "Usage: omarchy-omashield set on|off"
+      return 1
+      ;;
+  esac
+}
+
+# --- guarded update ---------------------------------------------------------
+
+cmd_update() {
+  if shield_bypassed; then
+    warn "OmaShield bypassed for this command — running the stock omarchy update."
+    exec omarchy-update "$@"
+  fi
+  if [[ $(plugin_widget_enabled) == "false" ]]; then
+    warn "OmaShield widget is disabled — running the stock omarchy update."
+    exec omarchy-update "$@"
+  fi
+  if ! shield_state_is_on; then
+    warn "OmaShield is OFF — running the stock omarchy update."
+    exec omarchy-update "$@"
+  fi
+
+  guard_update
+  local rc=$?
+  if ((rc != 0)); then
+    err "OmaShield could not run — see the messages above."
+    return $rc
+  fi
+
+  # Run the full omarchy update with both shadowed stages active (system + AUR)
+  # so only the preselected, reviewed packages can be installed in that phase.
+  if [[ -x $SHADOW_DIR/omarchy-update-aur-pkgs \
+     && -x $SHADOW_DIR/omarchy-update-system-pkgs ]]; then
+    info "Starting the full omarchy update (stages are guarded by OmaShield)."
+    PATH="$SHADOW_DIR:$PATH" exec omarchy-update "$@"
+  fi
+
+  info "The dispatch shadows are missing — running the stock omarchy update."
+  exec omarchy-update "$@"
+}
+
+cmd_aur_install() {
+  if shield_bypassed; then
+    warn "OmaShield bypassed for this command — running the stock omarchy AUR installer."
+    exec omarchy-pkg-aur-install "$@"
+  fi
+  if [[ $(plugin_widget_enabled) == "false" ]]; then
+    warn "OmaShield widget is disabled — running the stock omarchy AUR installer."
+    exec omarchy-pkg-aur-install "$@"
+  fi
+  if ! shield_state_is_on; then
+    warn "OmaShield is OFF — running the stock omarchy AUR installer."
+    exec omarchy-pkg-aur-install "$@"
+  fi
+
+  guard_aur_install "$@"
+}
+
+cmd_audit() {
+  if ! gate_tools_ready; then
+    ensure_tools || return 1
+  fi
+
+  local audit_bin
+  audit_bin="$(aur_audit_bin)"
+
+  info "Auditing every installed AUR package…"
+  echo -e "\e[1;36m── aur-scan (installed packages) ──\e[0m"
+  aur-scan system 2>&1
+  echo
+  echo -e "\e[1;36m── yay-guard (installed packages) ──\e[0m"
+  "$audit_bin" audit --no-ai 2>&1
+  echo
+}
+
+# --- uninstall (used by the panel's Uninstall button) ------------------------
+
+cmd_uninstall() {
+  if [[ ${1:-} != "--yes" && ${1:-} != "-y" ]]; then
+    warn "This removes every OmaShield customization and then the plugin itself:"
+    echo "  • the menu overrides (restores the stock Update / Install > AUR)"
+    echo "  • the native yay guard hooks (~/.config/yay/init.lua)"
+    echo "  • the ~/.local/bin/omarchy-omashield command"
+    echo "  • the OmaShield state and plugin directory"
+    echo "  It does NOT remove aur-scanner or yay-guard themselves."
+    echo
+    gum confirm --default=false \
+      --affirmative="Yes, uninstall everything" \
+      --negative="Keep OmaShield" \
+      "Proceed with the uninstall?" || { warn "Uninstall aborted."; return 1; }
+  fi
+
+  # Disarm first so every integration bypasses to stock for the rest of this run.
+  shield_state_off
+
+  # 1. Hand the menu back to the stock commands (exact pre-shield values when
+  #    captured, builtin stock otherwise). Runs before the state dir holding
+  #    the captured values is deleted below.
+  shield_menu_restore_stock
+
+  # 2. Remove the yay hook — but only if it is ours (either era). Restore a
+  #    previous user hook if we stashed one before installing ours.
+  if shield_hook_is_ours; then
+    local ybak
+    ybak=$(ls -t "$YAY_INIT".omashield-bak.* "$YAY_INIT".aur-shield-bak.* 2>/dev/null | head -n1)
+    if [[ -n $ybak && -f $ybak ]]; then
+      cp "$ybak" "$YAY_INIT"
+    else
+      rm -f "$YAY_INIT"
+    fi
+  fi
+
+  # 3. Drop the command (both eras) + state. The script is already loaded in
+  #    memory, so deleting its files while it runs is safe.
+  rm -f "$CMD_BIN" "$LEGACY_CMD_BIN"
+  rm -rf "$STATE_DIR"
+
+  ok "OmaShield integrations removed. aur-scanner and yay-guard are still installed."
+  echo "Removing the plugin itself…"
+  omarchy plugin remove "$PLUGIN_ID" --yes
+}
+
+# --- main -------------------------------------------------------------------
+
+cmd="${1:-help}"
+shift 2>/dev/null || true
+
+case "$cmd" in
+  status)           cmd_status "$@" ;;
+  on|enable)        cmd_set on ;;
+  off|disable)      cmd_set off ;;
+  set)              cmd_set "${1:-}" ;;
+  update|dispatch-update)   cmd_update "$@" ;;
+  install-aur|dispatch-aur-install) cmd_aur_install "$@" ;;
+  audit|audit-installed)    cmd_audit ;;
+  uninstall|cleanup) cmd_uninstall "$@" ;;
+  help|-h|--help)   usage ;;
+  *)                err "Unknown command: $cmd"; usage; return 1 ;;
+esac

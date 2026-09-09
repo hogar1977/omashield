@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.hogar1977.omashield",
+  "name": "OmaShield",
+  "version": "1.0.0",
+  "author": "hogar1977",
+  "license": "MIT",
+  "description": "Interactive, scanner-guarded AUR updates and installs for Omarchy. Preselect every pending update, defer or deselect any of them, and only let the packages you greenlit past the aur-scan + yay-guard review. Requires aur-scanner and yay-guard. Use the bar widget to flip it on/off.",
+  "x-aurDependencies": [
+    "aur-scanner",
+    "yay-guard"
+  ],
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "OmaShield",
+    "description": "Toggle interactive, scanner-guarded AUR updates and installs.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
