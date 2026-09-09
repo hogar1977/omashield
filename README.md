@@ -8,6 +8,28 @@ AUR set with **aur-scan** (static analysis) and **yay-guard** (heuristics +
 AUR metadata), and only installs what you explicitly greenlight. Native yay
 hooks guard every `yay` invocation as a second layer.
 
+## Waiver: AI-generated, as-is, test at your own risk
+
+OmaShield was generated with AI assistance and is released **as-is, without
+any guarantees** of correctness, completeness, or security. A scanner guard
+is security-adjacent software: a bug here could block legitimate updates or,
+worse, wave something malicious through. **Test it on your own
+responsibility** — ideally on a non-critical machine first — and never treat
+a clean scan as proof of safety.
+
+## Open call for review (and forks)
+
+I openly ask for scrutiny by people experienced in any of: Arch Linux
+packaging (PKGBUILDs, makepkg), the yay hooks API (`init.lua` autocmds),
+Quickshell/QML shell plugins, or supply-chain / AUR malware analysis. If
+that is you, your review is the single most valuable contribution this
+project could receive — please open an issue for anything suspicious,
+sloppy, or just wrong.
+
+Forking is explicitly encouraged: fork it, fix it, improve it. If you find
+merit in your changes, pull requests are welcome. The MIT license already
+permits all of this; consider this a personal invitation on top.
+
 ## Hard dependencies
 
 OmaShield **stays OFF** until both of these are installed:
@@ -15,7 +37,7 @@ OmaShield **stays OFF** until both of these are installed:
 - `aur-scanner` (provides `aur-scan`)
 - `yay-guard` (provides `aur_audit.py`)
 
-Install them through the standard procedure (Main Menu > Install > Package,
+Install them through the standard procedure (Main Menu > Install > AUR,
 or `yay -S aur-scanner yay-guard`), then switch OmaShield ON. The switch
 re-checks on every attempt and tells you what is missing.
 
@@ -35,8 +57,8 @@ wiring described in "Files touched".
 | Control | Behaviour |
 |---|---|
 | ON/OFF switch | Arms/disarms the guard. Refuses with a dialog while hard deps are missing. OFF keeps all files in place; flows bypass to stock behaviour. |
-| Update | Opens a terminal: preselected repo+AUR picker → dependency-cascade defer → aur-scan + yay-guard review → greenlight → full omarchy update of the chosen set only. |
-| Install AUR | Opens a terminal: fuzzy AUR picker → review of the picks → greenlight → install. |
+| Update | Same as Omarchy Menu > Update |
+| Install AUR | Same as Omarchy Menu > Install > AUR |
 | Audit AUR | Read-only audit of **all installed** AUR packages with both tools. Changes nothing. |
 | Uninstall | Restores the stock menu, removes the yay hooks, the `omarchy-omashield` command and the state dir, then removes the plugin itself. `aur-scanner`/`yay-guard` stay installed (remove them via Main Menu > Remove > Package if wanted). |
 
