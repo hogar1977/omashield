@@ -30,6 +30,25 @@ Forking is explicitly encouraged: fork it, fix it, improve it. If you find
 merit in your changes, pull requests are welcome. The MIT license already
 permits all of this; consider this a personal invitation on top.
 
+## Acknowledgments
+
+OmaShield is a thin orchestration layer — the real security expertise lives
+in the two tools it drives. Full credit to their developers:
+
+- **aur-scanner** by [KiefStudioMA](https://github.com/KiefStudioMA/ks-aur-scanner)
+  — a Rust-based static analyzer with 110+ detection codes covering malicious
+  patterns, persistence mechanisms, and known indicators of compromise, built
+  on real-world AUR attack research. OmaShield uses it for PKGBUILD review
+  and system audits.
+- **yay-guard** by [jwcastillo](https://github.com/jwcastillo/yay-guard)
+  (MIT) — heuristics over PKGBUILD/install scripts plus AUR metadata
+  (popularity, maintainer, dates), an affected-packages denylist, an optional
+  AI verdict, and the native yay v13 hooks OmaShield installs.
+
+If these tools keep you safe, consider starring their repositories. And note
+the waiver above covers OmaShield's glue code, not their work — evaluate each
+tool on its own merits.
+
 ## Hard dependencies
 
 OmaShield **stays OFF** until both of these are installed:
