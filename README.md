@@ -78,13 +78,19 @@ wiring described in "Files touched".
 | Control | Behaviour |
 |---|---|
 | ON/OFF switch | Arms/disarms the guard. Refuses with a dialog while hard deps are missing. OFF keeps all files in place; flows bypass to stock behaviour. |
-| Update | Same as Omarchy Menu > Update |
+| Update | Same as Omarchy Menu > Update, but repo, AUR and mise sets are each preselected for you first |
 | Install AUR | Same as Omarchy Menu > Install > AUR |
 | Audit AUR | Read-only audit of **all installed** AUR packages with both tools. Changes nothing. |
 | Uninstall | Restores the stock menu, removes the yay hooks, the `omarchy-omashield` command and the state dir, then removes the plugin itself. `aur-scanner`/`yay-guard` stay installed (remove them via Main Menu > Remove > Package if wanted). |
 
 Middle-click the bar icon re-reads status. Keys in the popup: `toggle`,
 `u` update, `i` install, `a` audit, `esc` close.
+
+The bar shows two glyphs: the stock update-available icon on the left
+(visible only while updates are pending — same probe and polling as the
+stock widget) and the shield on the right. Either opens this popup. Disable
+the stock `omarchy.system-update` widget (`omarchy plugin disable
+omarchy.system-update`) to avoid two updaters side by side.
 
 During Update, declining the AUR set (after a finding, or at greenlight)
 defers only the AUR stage — the repo picks still install. Cancelling the

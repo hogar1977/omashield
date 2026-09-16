@@ -21,6 +21,7 @@ OmaShield — interactive, scanner-guarded AUR package management for Omarchy.
 Usage:  omarchy-omashield <command>
 
   status                 Show the current state (also used by the shell panel).
+  pending                Live pending counts per source (repo, AUR, mise).
   on / enable            Turn the shield ON (refuses while aur-scanner or
                          yay-guard are missing).
   off / disable          Turn the shield OFF (stock omarchy behaviour).
@@ -54,7 +55,7 @@ cmd_status() {
   fi
   if grep -q 'omarchy-omashield' "$EXT_MENU" 2>/dev/null; then menu="overridden"; fi
   widget=$(plugin_widget_enabled)
-  for pcount in "$PENDING_AUR_FILE" "$PENDING_REPO_FILE"; do
+  for pcount in "$PENDING_AUR_FILE" "$PENDING_REPO_FILE" "$PENDING_MISE_FILE"; do
     if [[ -f $pcount ]]; then
       local plines
       plines=$(wc -l < "$pcount" 2>/dev/null | tr -d ' ')
@@ -70,6 +71,17 @@ cmd_status() {
     "widget: $widget" \
     "pending-updates: $pending" \
     "plugin-dir: $PLUGIN_DIR"
+}
+
+# --- live pending counts (read-only; needs no guard tools) -------------------
+
+cmd_pending() {
+  local r a m
+  r=$(list_repo_updates | sort -u | wc -l | tr -d ' ')
+  a=$(list_aur_updates | sort -u | wc -l | tr -d ' ')
+  m=$(mise_outdated | sed '/^$/d' | wc -l | tr -d ' ')
+  r=${r:-0}; a=${a:-0}; m=${m:-0}
+  printf '%s\n' "repo: $r" "aur: $a" "mise: $m" "total: $((r + a + m))"
 }
 
 # --- switch -----------------------------------------------------------------
@@ -123,13 +135,20 @@ cmd_update() {
 
   # Shadow PATH makes the guarded stages win inside the stock update.
   if [[ -x $SHADOW_DIR/omarchy-update-aur-pkgs \
-     && -x $SHADOW_DIR/omarchy-update-system-pkgs ]]; then
+     && -x $SHADOW_DIR/omarchy-update-system-pkgs \
+     && -x $SHADOW_DIR/omarchy-update-mise ]]; then
     info "Starting the full omarchy update (stages are guarded by OmaShield)."
-    PATH="$SHADOW_DIR:$PATH" exec omarchy-update "$@"
+    PATH="$SHADOW_DIR:$PATH" omarchy-update "$@"
+    rc=$?
+  else
+    info "The dispatch shadows are missing — running the stock omarchy update."
+    omarchy-update "$@"
+    rc=$?
   fi
 
-  info "The dispatch shadows are missing — running the stock omarchy update."
-  exec omarchy-update "$@"
+  # Re-probe availability (mirrors omarchy-update-status for the stock widget).
+  omarchy-shell -q io.github.hogar1977.omashield refresh >/dev/null 2>&1 || true
+  return $rc
 }
 
 cmd_aur_install() {
@@ -220,6 +239,7 @@ shift 2>/dev/null || true
 
 case "$cmd" in
   status)           cmd_status "$@" ;;
+  pending)          cmd_pending "$@" ;;
   on|enable)        cmd_set on ;;
   off|disable)      cmd_set off ;;
   set)              cmd_set "${1:-}" ;;

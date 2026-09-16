@@ -16,6 +16,7 @@ STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omashield"
 STATE_FILE="$STATE_DIR/state"                 # enabled=1 | enabled=0
 PENDING_AUR_FILE="$STATE_DIR/pending-aur"     # selected AUR packages
 PENDING_REPO_FILE="$STATE_DIR/pending-repo"   # selected repo packages
+PENDING_MISE_FILE="$STATE_DIR/pending-mise"   # selected mise tools
 SEEN_REPO_FILE="$STATE_DIR/seen-repo"         # full repo list offered in the picker
 SCANNED_AUR_FILE="$STATE_DIR/scanned-aur"     # reviewed AUR set (stage stamp)
 SHADOW_DIR="$STATE_DIR/bin"                   # PATH shadow dir (update stages)
@@ -97,6 +98,23 @@ stock_aur_ignore() {
   printf '%s' "${ign:-}"
 }
 
+# Pending repo update names, one per line (last-synced DB, no elevation).
+list_repo_updates() {
+  pacman -Qu 2>/dev/null | awk '{print $1}'
+}
+
+# Pending AUR update names, minus the stock ignore list (live RPC).
+list_aur_updates() {
+  local raw stock_ignore
+  raw=$(yay -Qua 2>/dev/null | awk '{print $1}')
+  stock_ignore=$(stock_aur_ignore)
+  if [[ -z $stock_ignore ]]; then
+    printf '%s\n' "$raw" | sed '/^$/d'
+  else
+    printf '%s\n' "$raw" | sed '/^$/d' | grep -vxF -f <(tr ',' '\n' <<< "$stock_ignore") || true
+  fi
+}
+
 # --- First-ON wiring (idempotent; user-owned paths only) --------------------
 
 # CLI symlink. The panel uses the absolute path, so this may run first.
@@ -128,6 +146,7 @@ shield_ensure_shadow() {
   mkdir -p "$SHADOW_DIR"
   ln -sf "$SCRIPTS_DIR/update-aur-pkgs.sh" "$SHADOW_DIR/omarchy-update-aur-pkgs"
   ln -sf "$SCRIPTS_DIR/update-system-pkgs.sh" "$SHADOW_DIR/omarchy-update-system-pkgs"
+  ln -sf "$SCRIPTS_DIR/update-mise.sh" "$SHADOW_DIR/omarchy-update-mise"
 }
 
 # Route the menu's Update / Install>AUR through the shield (ON), capturing

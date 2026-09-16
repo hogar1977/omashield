@@ -1,6 +1,6 @@
 #!/bin/bash
-# OmaShield — update picker: preselect repo+AUR updates, scan the AUR picks,
-# greenlight, save the selection for the shadow stages (nothing installed here).
+# OmaShield — update picker: preselect repo/AUR/mise updates, scan the AUR
+# picks, greenlight, save selections for the shadow stages (nothing installed here).
 
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib-state.sh"
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib-gate.sh"
@@ -10,6 +10,7 @@ clear_pending() {
   : > "$PENDING_REPO_FILE"
   : > "$SCANNED_AUR_FILE"
   : > "$SEEN_REPO_FILE"
+  : > "$PENDING_MISE_FILE"
 }
 
 # Persist a repo-only outcome when the AUR stage is deferred.
@@ -20,6 +21,49 @@ save_repo_only() {
   local n
   n=$(wc -l < "$PENDING_REPO_FILE" 2>/dev/null | tr -d ' ')
   echo -e "\e[32mRepo selection saved — the update phase will install ${n:-0} repo package(s), AUR deferred.\e[0m"
+}
+
+# Outdated mise tool names, one per line.
+mise_outdated() {
+  local tools_json
+  tools_json=$(MISE_MINIMUM_RELEASE_AGE=0 mise outdated --json 2>/dev/null) || tools_json="{}"
+  python3 -c '
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d={}
+print("\n".join(sorted(d.keys())) if isinstance(d,dict) else [])
+' <<< "$tools_json"
+}
+
+# Preselect outdated mise tools. Saves immediately (even when empty), so all
+# later exit paths keep the mise choice; cancelling aborts the whole update.
+pick_mise() {
+  if (($# == 0)); then
+    : > "$PENDING_MISE_FILE"
+    echo -e "\e[32mmise tools are up to date.\e[0m"
+    return 0
+  fi
+
+  local names=("$@")
+  echo -e "\e[1;36m\nmise tools — ${#names[@]} outdated (preselected)\e[0m"
+  local sel_args=() n
+  for n in "${names[@]}"; do sel_args+=(--selected="$n"); done
+  local kept rc
+  kept=$(printf '%s\n' "${names[@]}" | gum choose \
+    --height 10 \
+    --no-limit \
+    "${sel_args[@]}" \
+    --header "mise — deselect the ones to defer")
+  rc=$?
+  if ((rc != 0)); then
+    echo -e "\e[33mSelection cancelled — nothing will be changed.\e[0m"
+    return 1
+  fi
+  printf '%s\n' "$kept" | sed '/^$/d' | sort -u > "$PENDING_MISE_FILE"
+  local c
+  c=$(wc -l < "$PENDING_MISE_FILE" 2>/dev/null | tr -d ' ')
+  echo -e "\e[32m${c:-0} mise tool(s) will update.\e[0m"
+  return 0
 }
 
 # Warn when the repo databases are stale (the picker cannot refresh them
@@ -50,24 +94,15 @@ guard_update() {
   local repo=() aur=() p
   while IFS= read -r p; do
     [[ -n $p ]] && repo+=("$p")
-  done < <(pacman -Qu 2>/dev/null | awk '{print $1}')
+  done < <(list_repo_updates)
   while IFS= read -r p; do
     [[ -n $p ]] && aur+=("$p")
-  done < <(yay -Qua 2>/dev/null | awk '{print $1}')
-  # Honor the stock AUR stage's ignore list (parsed live, never drifts).
-  local stock_ignore ignore_list=()
-  stock_ignore=$(stock_aur_ignore)
-  if [[ -n $stock_ignore ]]; then
-    IFS=',' read -ra ignore_list <<< "$stock_ignore"
-  fi
-  for p in "${ignore_list[@]}"; do
-    [[ -n $p ]] || continue
-    local filtered=()
-    for a in "${aur[@]}"; do [[ $a != "$p" ]] && filtered+=("$a"); done
-    aur=("${filtered[@]}")
-  done
+  done < <(list_aur_updates)
 
-  if ((${#repo[@]} == 0 && ${#aur[@]} == 0)); then
+  local mise=() m
+  while IFS= read -r m; do [[ -n $m ]] && mise+=("$m"); done < <(mise_outdated)
+
+  if ((${#repo[@]} == 0 && ${#aur[@]} == 0 && ${#mise[@]} == 0)); then
     echo -e "\e[32mNo updates are pending right now.\e[0m"
     clear_pending
     return 0
@@ -87,26 +122,30 @@ guard_update() {
   done
   local n_all=${#combined[@]}
 
-  echo -e "\e[1;36m\nInteractive update selection — $n_all pending\e[0m"
-  echo -e "(${#repo[@]} repo, ${#aur[@]} AUR)"
-  echo -e "All updates are \e[1mpreselected\e[0m. Press \e[1mSpace\e[0m to deselect"
-  echo -e "(defer) a package, then \e[1mEnter\e[0m to continue. Anything that depends"
-  echo -e "on a deferred package is deferred too."
-  echo
+  local kept="" rc=0
+  if ((n_all == 0)); then
+    echo -e "\e[32mNo repo/AUR updates pending.\e[0m"
+  else
+    echo -e "\e[1;36m\nInteractive update selection — $n_all pending\e[0m"
+    echo -e "(${#repo[@]} repo, ${#aur[@]} AUR)"
+    echo -e "All updates are \e[1mpreselected\e[0m. Press \e[1mTab\e[0m (or Space/x) to deselect"
+    echo -e "(defer) a package, then \e[1mEnter\e[0m to continue. Anything that depends"
+    echo -e "on a deferred package is deferred too."
+    echo
 
-  # --no-limit makes this a true multi-select list; each entry starts selected.
-  local sel_args=()
-  for p in "${combined[@]}"; do sel_args+=(--selected="$p"); done
-  local kept rc
-  kept=$(printf '%s\n' "${combined[@]}" | gum choose \
-    --height 18 \
-    --no-limit \
-    "${sel_args[@]}" \
-    --header "Updates — deselect the ones to defer (all others update)")
-  rc=$?
-  if ((rc != 0)); then
-    echo -e "\e[33mSelection cancelled — nothing will be changed.\e[0m"
-    return 1
+    # --no-limit makes this a true multi-select list; each entry starts selected.
+    local sel_args=()
+    for p in "${combined[@]}"; do sel_args+=(--selected="$p"); done
+    kept=$(printf '%s\n' "${combined[@]}" | gum choose \
+      --height 18 \
+      --no-limit \
+      "${sel_args[@]}" \
+      --header "Updates — deselect the ones to defer (all others update)")
+    rc=$?
+    if ((rc != 0)); then
+      echo -e "\e[33mSelection cancelled — nothing will be changed.\e[0m"
+      return 1
+    fi
   fi
 
   declare -A kept_set=()
@@ -166,28 +205,32 @@ guard_update() {
     if [[ -n ${aur_set[$k]:-} ]]; then kept_aur+=("$k"); else kept_repo+=("$k"); fi
   done
 
-  if ((${#kept_arr[@]} == 0)); then
+  if ((${#kept_arr[@]} == 0 && ${#mise[@]} == 0)); then
     echo -e "\e[1;33m\nEvery update is deferred — nothing will be changed.\e[0m"
     clear_pending
     return 0
   fi
 
-  echo
-  echo -e "\e[1;36mFinal update set (${#kept_arr[@]}):\e[0m"
-  if ((${#kept_repo[@]})); then
-    echo -e "  repo (${#kept_repo[@]}):"
-    printf '    \e[32m%s\e[0m\n' "${kept_repo[@]}" | sort
-  fi
-  if ((${#kept_aur[@]})); then
-    echo -e "  AUR (${#kept_aur[@]}):"
-    printf '    \e[36m%s\e[0m\n' "${kept_aur[@]}" | sort
-  fi
-  if ((${#deferred[@]})); then
+  if ((${#kept_arr[@]} > 0 || ${#deferred[@]} > 0)); then
     echo
-    echo -e "\e[33mDeferred (${#deferred[@]}):\e[0m"
-    printf '   %s\n' "${deferred[@]}" | sort -u
+    echo -e "\e[1;36mFinal update set (${#kept_arr[@]}):\e[0m"
+    if ((${#kept_repo[@]})); then
+      echo -e "  repo (${#kept_repo[@]}):"
+      printf '    \e[32m%s\e[0m\n' "${kept_repo[@]}" | sort
+    fi
+    if ((${#kept_aur[@]})); then
+      echo -e "  AUR (${#kept_aur[@]}):"
+      printf '    \e[36m%s\e[0m\n' "${kept_aur[@]}" | sort
+    fi
+    if ((${#deferred[@]})); then
+      echo
+      echo -e "\e[33mDeferred (${#deferred[@]}):\e[0m"
+      printf '   %s\n' "${deferred[@]}" | sort -u
+    fi
+    echo
   fi
-  echo
+
+  pick_mise "${mise[@]}" || return 1
 
   # Scan only the AUR survivors; repo-only selections skip the scanners.
   if ((${#kept_aur[@]})); then

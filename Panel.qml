@@ -36,13 +36,31 @@ Panel {
   property string hookState: "absent"
   property string menuState: "stock"
   property string widgetState: "unknown"
-  property string pendingText: "0"
+  property string liveText: ""
+  property string liveTotal: "0"
   property bool statusLoaded: false
   property bool statusFailed: false
   property string actionMessage: ""
 
   function reload() {
     if (!statusProcess.running) statusProcess.running = true
+    if (!pendingProcess.running) pendingProcess.running = true
+    if (root.hostWidget && root.hostWidget.probeUpdates) root.hostWidget.probeUpdates()
+  }
+
+  function applyPending(text) {
+    var r = "0", a = "0", m = "0", t = "0"
+    var lines = String(text || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var mt = lines[i].match(/^(repo|aur|mise|total):\s*(\d+)$/)
+      if (!mt) continue
+      if (mt[1] === "repo") r = mt[2]
+      else if (mt[1] === "aur") a = mt[2]
+      else if (mt[1] === "mise") m = mt[2]
+      else if (mt[1] === "total") t = mt[2]
+    }
+    liveText = r + " repo · " + a + " AUR · " + m + " mise"
+    liveTotal = t
   }
 
   function applyStatus(text) {
@@ -52,7 +70,6 @@ Panel {
     hookState = "absent"
     menuState = "stock"
     widgetState = "unknown"
-    pendingText = "0"
     var lines = String(text || "").split("\n")
     for (var i = 0; i < lines.length; i++) {
       var m = lines[i].match(/^([^:]+):\s*(.*)$/)
@@ -65,7 +82,6 @@ Panel {
       else if (key === "native-hook") hookState = value
       else if (key === "menu") menuState = value
       else if (key === "widget") widgetState = value
-      else if (key === "pending-updates") pendingText = value
     }
     statusLoaded = true
     statusFailed = false
@@ -293,15 +309,17 @@ Panel {
       Item {
         width: parent.width
         height: Style.space(20)
-        visible: root.pendingText !== "0"
+        visible: root.liveText !== ""
 
         Text {
           textFormat: Text.PlainText
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          text: "→ " + root.pendingText + " update(s) preselected for the next update."
-          color: Color.accent
+          text: root.liveTotal === "0"
+            ? "Everything is up to date."
+            : "→ " + root.liveText + " pending — Update preselects all of them."
+          color: root.liveTotal === "0" ? root.secondaryForeground : Color.accent
           font.family: root.contentFontFamily
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
@@ -514,6 +532,17 @@ Panel {
         root.statusFailed = true
         root.statusLoaded = true
       }
+    }
+  }
+
+  Process {
+    id: pendingProcess
+    running: false
+    command: [root.cliBin, "pending"]
+    stdout: StdioCollector { id: pendingStdout; waitForEnd: true }
+    stderr: StdioCollector { id: pendingStderr; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.applyPending(String(pendingStdout.text || ""))
     }
   }
 
