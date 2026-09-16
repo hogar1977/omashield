@@ -1,29 +1,35 @@
 #!/bin/bash
-#
-# OmaShield — scanner gate helpers.
-#
-# These run the two independent AUR reviewers (aur-scan and yay-guard) over a
-# set of packages, print their reports for the user to see, and implement the
-# explicit "greenlight" step that has to happen before anything is installed.
+# OmaShield — scanner gate: review AUR sets with both tools, then greenlight.
 
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib-state.sh"
 
-# Emergency bypass for a single command (also honoured by the native hooks):
-# OMASHIELD_OFF=1 (legacy AUR_SHIELD_OFF=1 still works).
+# Single-command bypass, also honoured by the native hooks.
 shield_bypassed() {
-  [[ ${OMASHIELD_OFF:-} == "1" || ${AUR_SHIELD_OFF:-} == "1" || ${AUR_AUDIT_OFF:-} == "1" ]]
+  [[ ${OMASHIELD_OFF:-} == "1" || ${AUR_AUDIT_OFF:-} == "1" ]]
 }
 
-# Returns 0 when both tools are available.
+# True when both guard tools are available.
 gate_tools_ready() {
   command -v aur-scan >/dev/null 2>&1 && aur_audit_bin >/dev/null 2>&1
 }
 
-# gate_scan <pkg...>
-#
-# Prints both reviews for the given packages. Returns 0 when every package is
-# clean (no high/critical findings), 1 when at least one review raised a
-# high-or-critical finding.
+# Tell the user to install the tools themselves, then switch the shield OFF.
+tools_missing_notice() {
+  local missing
+  missing=$(shield_missing_deps | tr '\n' ' ')
+  echo -e "\e[1;31mOmaShield needs ${missing:-aur-scanner yay-guard} before it can proceed.\e[0m" >&2
+  echo -e "Install them through the standard procedure (Omarchy Menu > Install > AUR," >&2
+  echo -e "or yay -S aur-scanner yay-guard), then switch OmaShield ON again." >&2
+  shield_state_off
+  echo -e "\e[33mOmaShield has switched itself OFF — stock behaviour applies until then.\e[0m" >&2
+}
+
+# Abort when the tools are missing. Never installs anything.
+require_tools() {
+  gate_tools_ready || { tools_missing_notice; return 1; }
+}
+
+# Print both tool reviews. Returns 0 when clean, 1 on high/critical findings.
 gate_scan() {
   local pkgs=("$@")
   if ((${#pkgs[@]} == 0)); then return 0; fi
@@ -55,10 +61,7 @@ gate_scan() {
   return 1
 }
 
-# gate_greenlight <pkg...>
-#
-# Asks the user to explicitly greenlight the reviewed packages. Returns 0 to
-# proceed, 1 to abort (nothing will be installed).
+# Explicit user greenlight. Returns 0 to proceed, 1 to abort.
 gate_greenlight() {
   local count=$#
   if ((count == 0)); then return 1; fi

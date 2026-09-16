@@ -4,17 +4,8 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// OmaShield — popup.
-//
-// The faceplate for the guarded flow. It shows the current state (ON/OFF),
-// the guard tools it found, and the entry points the Main Menu routes through
-// (Update and Install > AUR), plus the uninstall action.
-//
-// All real work happens in the omarchy-omashield CLI, never in QML. The
-// panel runs short, fast commands and parses their plain output; anything
-// that needs a terminal (the interactive pickers) is launched through
-// omarchy's floating-terminal-with-presentation helper so it keeps sudo and
-// interactive UI, and nothing here ever blocks on it.
+// OmaShield popup: switch, status, Update/Install/Audit entry points.
+// All real work runs in the CLI; QML only shows status and opens terminals.
 
 Panel {
   id: root
@@ -26,9 +17,7 @@ Panel {
   property var hostWidget: null
   readonly property var barIdentity: hostWidget || root
 
-  // Absolute path to our own CLI. The panel reaches it directly so first-ON
-  // wiring works before ~/.local/bin/omarchy-omashield exists; the menu
-  // keeps using the bare name once the symlink is in place.
+  // Absolute CLI path so first-ON wiring works before the symlink exists.
   readonly property string cliBin: {
     var u = String(Qt.resolvedUrl("scripts/aur-shield"))
     if (u.substring(0, 7) === "file://") u = decodeURIComponent(u.substring(7))
@@ -39,7 +28,7 @@ Panel {
   readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color secondaryForeground: Util.alpha(contentForeground, 0.54)
 
-  // ---- Live status --------------------------------------------------------
+  // ---- Live status ----
 
   property bool shieldOn: true
   property string scanState: "missing"
@@ -82,9 +71,7 @@ Panel {
     statusFailed = false
   }
 
-  // The ON gate: with a fresh status showing missing tools, show the
-  // dependencies dialog instead of flipping. Otherwise the CLI enforces the
-  // same gate headlessly (exit 3) and the dialog opens from there.
+  // ON gate: missing tools show the notice instead of flipping (CLI exits 3 too).
   function tryToggle() {
     if (!root.shieldOn && root.statusLoaded
         && (root.scanState !== "installed" || root.guardState !== "installed")) {
@@ -102,15 +89,10 @@ Panel {
     setProcess.running = true
   }
 
-  // A terminal owns the interactive flows, exactly like the Main Menu entries
-  // did before the override — so sudo prompts stay on screen and gum/fzf can
-  // use them.
+  // Interactive flows run in a terminal via the presentation launcher.
   function launchFlow(mode) {
-    var cli = Util.shellQuote(root.cliBin)
     Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation",
-      "bash", "-c",
-      "omarchy-show-logo; " + cli + " " + mode +
-      "; if (($? != 130)); then omarchy-show-done; fi"])
+      root.cliBin, mode])
     root.close()
   }
 
@@ -125,7 +107,7 @@ Panel {
     root.close()
   }
 
-  // ---- Surface ------------------------------------------------------------
+  // ---- Surface ----
 
   KeyboardPanel {
     id: panel
@@ -163,7 +145,7 @@ Panel {
       anchors.topMargin: Style.space(20)
       spacing: Style.space(18)
 
-      // ---- Header ---------------------------------------------------------
+      // Header
       Item {
         width: parent.width
         height: titleRow.height + Style.space(4) + Math.max(statusLine.implicitHeight, Style.space(12))
@@ -225,8 +207,6 @@ Panel {
           }
         }
 
-        // The status line, on its own line under the title so it spans the
-        // full popup width with nothing boxing it in on either side.
         Text {
           id: statusLine
           textFormat: Text.PlainText
@@ -249,7 +229,7 @@ Panel {
 
       PanelSeparator { foreground: root.contentForeground }
 
-      // ---- Guard stack ----------------------------------------------------
+      // Guard stack
       Text {
         id: stackCaption
         textFormat: Text.PlainText
@@ -320,7 +300,6 @@ Panel {
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          // A saved selection is waiting for the next omarchy update.
           text: "→ " + root.pendingText + " update(s) preselected for the next update."
           color: Color.accent
           font.family: root.contentFontFamily
@@ -347,7 +326,7 @@ Panel {
         }
       }
 
-      // ---- Actions ---------------------------------------------------------
+      // Actions
       Row {
         width: parent.width
         spacing: Style.space(8)
@@ -382,7 +361,7 @@ Panel {
         }
       }
 
-      // ---- Key hints -------------------------------------------------------
+      // Key hints
       Column {
         width: parent.width
         spacing: Style.space(4)
@@ -400,31 +379,107 @@ Panel {
       }
     }
 
-    // ---- Dependencies dialog: the ON gate ----------------------------------
-    // Lives inside the popup card (same window layer): OmaShield stays OFF
-    // until aur-scanner and yay-guard are installed through the standard
-    // procedure. Confirming only dismisses; switching ON again re-checks.
+    // Dependencies notice: single-button card (ConfirmDialog forces two).
+    // Dismissing only closes it; switching ON again re-checks.
 
-    ConfirmDialog {
+    Item {
       id: depsDialog
       anchors.fill: parent
       z: 10
-      opened: false
-      message: "OmaShield needs aur-scanner and yay-guard before it can switch ON. " +
-               "Install them through the standard procedure (Main Menu > Install > Package, " +
+      visible: opened
+      property bool opened: false
+      property string message: "OmaShield needs aur-scanner and yay-guard before it can switch ON. " +
+               "Install them through the standard procedure (Omarchy Menu > Install > AUR, " +
                "or yay -S aur-scanner yay-guard), then switch ON again. " +
-               "OmaShield stays OFF until then."
-      cancelText: "Later"
-      confirmText: "Understood"
-      foreground: root.contentForeground
-      fontFamily: root.contentFontFamily
-      onCanceled: depsDialog.opened = false
-      onConfirmed: depsDialog.opened = false
+               "OmaShield stays OFF until then, and switches itself OFF again " +
+               "if the tools are removed later."
+
+      function close() {
+        depsDialog.opened = false
+        keyCatcher.forceActiveFocus()
+      }
+
+      onOpenedChanged: if (opened) closeButton.forceActiveFocus()
+
+      Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_Escape || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+          depsDialog.close()
+          event.accepted = true
+        }
+      }
+
+      Rectangle {
+        anchors.fill: parent
+        color: Util.alpha(Color.background, 0.7)
+
+        MouseArea { anchors.fill: parent; onClicked: depsDialog.close() }
+
+        BorderSurface {
+          id: card
+          width: Math.min(parent.width - Style.space(32), Style.space(370))
+          height: card.contentTopInset + card.contentBottomInset + messageText.implicitHeight + Style.space(20) + Style.space(34)
+          anchors.centerIn: parent
+          color: Color.background
+          borderSpec: Border.flat(Color.accent, Style.normalBorderWidth)
+          padding: Style.space(18)
+
+          MouseArea { anchors.fill: parent; onClicked: {} }
+
+          Item {
+            anchors.fill: parent
+            anchors.topMargin: card.contentTopInset
+            anchors.rightMargin: card.contentRightInset
+            anchors.bottomMargin: card.contentBottomInset
+            anchors.leftMargin: card.contentLeftInset
+
+            Text {
+              id: messageText
+              textFormat: Text.PlainText
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: parent.top
+              text: depsDialog.message
+              color: root.contentForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.title
+              wrapMode: Text.WordWrap
+            }
+
+            BorderSurface {
+              id: closeButton
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              width: Style.space(88)
+              height: Style.space(34)
+              color: activeFocus
+                ? Util.alpha(Color.foreground, 0.08)
+                : "transparent"
+              borderSpec: Border.flat(activeFocus ? Color.accent : Util.alpha(root.contentForeground, 0.38), Style.normalBorderWidth)
+              radius: 0
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.centerIn: parent
+                text: "Understood"
+                color: activeFocus ? Color.accent : root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onEntered: closeButton.forceActiveFocus()
+                onClicked: depsDialog.close()
+              }
+            }
+          }
+        }
+      }
     }
 
-    // ---- Confirmation: uninstalling removes every integration, then the ----
-    // ---- plugin itself (the bar icon goes with the shell's disable step). -
-    // Also inside the card so it actually renders.
+    // Uninstall confirmation. Lives inside the card so it actually renders.
 
     ConfirmDialog {
       id: uninstallConfirm
@@ -444,7 +499,7 @@ Panel {
     }
   }
 
-  // ---- Process wiring -----------------------------------------------------
+  // ---- Processes ----
 
   Process {
     id: statusProcess
@@ -487,8 +542,7 @@ Panel {
     stdout: StdioCollector { id: uninstallStdout; waitForEnd: true }
     stderr: StdioCollector { id: uninstallStderr; waitForEnd: true }
     onExited: function(exitCode) {
-      // The plugin directory is deleted by `omarchy plugin remove` while this
-      // QML instance is already loaded. Leave a plain message behind.
+      // The plugin dir is gone by now; only a plain message can remain.
       if (exitCode === 0) {
         root.actionMessage = "Uninstall done."
       } else {

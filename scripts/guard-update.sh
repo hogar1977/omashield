@@ -1,52 +1,52 @@
 #!/bin/bash
-#
-# OmaShield — interactive update picker (repo + AUR).
-#
-# This replaces omarchy's silent "upgrade everything" behaviour with a
-# reviewable interaction:
-#
-#   1. Every pending repo AND AUR update is listed, all preselected.
-#   2. You deselect the ones you want to defer (Space / Enter to confirm).
-#   3. Any package that depends on a deferred one is deferred too.
-#   4. If AUR packages survive, aur-scan AND yay-guard review them. When the
-#      selection is repo-only, the scanners are skipped (nothing to audit).
-#   5. Only after you greenlight the reports is the selection saved.
-#
-# Nothing is installed or upgraded from here — the saved lists are consumed by
-# the shadowed `omarchy-update-system-pkgs` and `omarchy-update-aur-pkgs`
-# during the real omarchy update.
+# OmaShield — update picker: preselect repo+AUR updates, scan the AUR picks,
+# greenlight, save the selection for the shadow stages (nothing installed here).
 
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib-state.sh"
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib-gate.sh"
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ensure-tools.sh"
 
 clear_pending() {
   : > "$PENDING_AUR_FILE"
   : > "$PENDING_REPO_FILE"
   : > "$SCANNED_AUR_FILE"
+  : > "$SEEN_REPO_FILE"
 }
 
-# guard_update ()
-#   returns 0 when the system update may proceed (the pending files may be
-#           empty meaning "defer every package")
-#   returns 1 when the flow could not run at all (tools refused)
-guard_update() {
-  ensure_tools || return 1
+# Persist a repo-only outcome when the AUR stage is deferred.
+save_repo_only() {
+  : > "$PENDING_AUR_FILE"
+  : > "$SCANNED_AUR_FILE"
+  printf '%s\n' "$@" | sed '/^$/d' | sort -u > "$PENDING_REPO_FILE"
+  local n
+  n=$(wc -l < "$PENDING_REPO_FILE" 2>/dev/null | tr -d ' ')
+  echo -e "\e[32mRepo selection saved — the update phase will install ${n:-0} repo package(s), AUR deferred.\e[0m"
+}
 
-  # The repo upgrade list must see the versions pacman will install, so
-  # refresh the databases before listing (sudo asked once, here, in the
-  # interactive terminal). Best-effort: a stale db still yields a list.
-  if sudo -v 2>/dev/null; then
-    echo -e "\e[1;36mRefreshing package databases…\e[0m"
-    sudo -n pacman -Sy >/dev/null 2>&1 \
-      || echo -e "\e[33mCould not refresh the mirror databases — showing the current list.\e[0m"
-  else
-    echo -e "\e[33mNo sudo available — showing the current list.\e[0m"
+# Warn when the repo databases are stale (the picker cannot refresh them
+# itself; the AUR list below is still live via RPC).
+warn_sync_age() {
+  local newest=0 f mtime now age
+  for f in /var/lib/pacman/sync/*.db; do
+    [[ -f $f && -r $f ]] || continue
+    mtime=$(stat -c %Y "$f" 2>/dev/null) || continue
+    ((mtime > newest)) && newest=$mtime
+  done
+  ((newest == 0)) && return 0
+  now=$(date +%s)
+  age=$(( (now - newest) / 3600 ))
+  if ((age >= 24)); then
+    echo -e "\e[33mNote: the repo package databases are ~$((age / 24)) day(s) old — very recent repo updates may not be listed below (the AUR list is live). The update phase syncs before installing.\e[0m"
   fi
+}
 
-  # What can be updated right now? Repo upgrades come from the synced db,
-  # AUR upgrades from the AUR RPC. Both print "name old-ver new-ver".
-  local repo_aur_restored
+# guard_update: 0 = update may proceed (empty pending files = defer all),
+# 1 = could not run (tools missing, picker cancelled) — caller must stop.
+guard_update() {
+  require_tools || return 1
+
+  warn_sync_age
+
+  # Pending updates: repo from the synced db, AUR from the AUR RPC.
   local repo=() aur=() p
   while IFS= read -r p; do
     [[ -n $p ]] && repo+=("$p")
@@ -54,8 +54,7 @@ guard_update() {
   while IFS= read -r p; do
     [[ -n $p ]] && aur+=("$p")
   done < <(yay -Qua 2>/dev/null | awk '{print $1}')
-  # The stock omarchy flow already ignores these in the AUR stage; keep that.
-  # The list is parsed from the stock script so we never drift out of sync.
+  # Honor the stock AUR stage's ignore list (parsed live, never drifts).
   local stock_ignore ignore_list=()
   stock_ignore=$(stock_aur_ignore)
   if [[ -n $stock_ignore ]]; then
@@ -74,8 +73,19 @@ guard_update() {
     return 0
   fi
 
-  local n_all=$(( ${#repo[@]} + ${#aur[@]} ))
-  local combined=("${repo[@]}" "${aur[@]}")
+  # Remember everything the picker is about to offer: the shadow system stage
+  # compares this against the post-sync pending list to report repo updates
+  # that surfaced only after the selection was made.
+  printf '%s\n' "${repo[@]}" | sed '/^$/d' | sort -u > "$SEEN_REPO_FILE"
+
+  local combined=()
+  declare -A seen_pkg=()
+  for p in "${repo[@]}" "${aur[@]}"; do
+    [[ -n $p && -z ${seen_pkg[$p]:-} ]] || continue
+    seen_pkg[$p]=1
+    combined+=("$p")
+  done
+  local n_all=${#combined[@]}
 
   echo -e "\e[1;36m\nInteractive update selection — $n_all pending\e[0m"
   echo -e "(${#repo[@]} repo, ${#aur[@]} AUR)"
@@ -84,13 +94,20 @@ guard_update() {
   echo -e "on a deferred package is deferred too."
   echo
 
-  local kept
+  # --no-limit makes this a true multi-select list; each entry starts selected.
+  local sel_args=()
+  for p in "${combined[@]}"; do sel_args+=(--selected="$p"); done
+  local kept rc
   kept=$(printf '%s\n' "${combined[@]}" | gum choose \
     --height 18 \
-    --selected='*' \
-    --header "Updates — deselect the ones to defer (all others update)" \
-    --input-delimiter=$'\n' \
-    --output-delimiter=$'\n' 2>/dev/null)
+    --no-limit \
+    "${sel_args[@]}" \
+    --header "Updates — deselect the ones to defer (all others update)")
+  rc=$?
+  if ((rc != 0)); then
+    echo -e "\e[33mSelection cancelled — nothing will be changed.\e[0m"
+    return 1
+  fi
 
   declare -A kept_set=()
   local k
@@ -99,7 +116,6 @@ guard_update() {
     kept_set[$k]=1
   done <<< "$kept"
 
-  # Everything not kept is deferred.
   declare -A deferred_set=()
   local deferred=()
   for p in "${combined[@]}"; do
@@ -114,9 +130,7 @@ guard_update() {
     echo -e "\e[33mYou deferred (${#deferred[@]}): ${deferred[*]}\e[0m"
   fi
 
-  # Cascade: if a deferred package is depended on by a kept one, defer that
-  # one too. pactree -r lists everything installed that depends on a package
-  # (directly or transitively).
+  # Cascade: also defer kept packages depending on a deferred one.
   local changed=1 round=0 d r ndeps
   declare -a newdefer=()
   while ((changed)) && ((round < 12)); do
@@ -142,8 +156,7 @@ guard_update() {
     deferred+=("${newdefer[@]}")
   done
 
-  # Final split: kept → repo vs AUR (a package present in both lists counts
-  # as AUR, which is the stricter membership).
+  # Split kept into repo vs AUR (either list wins AUR = stricter).
   local kept_repo=() kept_aur=() kept_arr=()
   declare -A aur_set=()
   for p in "${aur[@]}"; do aur_set[$p]=1; done
@@ -176,10 +189,9 @@ guard_update() {
   fi
   echo
 
-  # Scan only what actually comes from the AUR. A repo-only selection has
-  # nothing for aur-scan/yay-guard to audit, so those runs are skipped.
+  # Scan only the AUR survivors; repo-only selections skip the scanners.
   if ((${#kept_aur[@]})); then
-    if ! gate_tools_ready; then ensure_tools || return 1; fi
+    require_tools || return 1
 
     if ! gate_scan "${kept_aur[@]}"; then
       echo
@@ -189,9 +201,8 @@ guard_update() {
         "High/critical findings were reported above. What should OmaShield do?"; then
         echo -e "\e[33mForcing the risky AUR update(s) — your explicit choice.\e[0m"
       else
-        echo -e "\e[1;31mAUR stage skipped — nothing from the AUR was installed.\e[0m"
-        : > "$PENDING_AUR_FILE"
-        : > "$SCANNED_AUR_FILE"
+        echo -e "\e[1;31mAUR stage skipped — the repo selection below still updates.\e[0m"
+        save_repo_only "${kept_repo[@]}"
         return 0
       fi
     fi
@@ -201,9 +212,8 @@ guard_update() {
       --affirmative="Proceed with ${#kept_aur[@]} AUR update(s)" \
       --negative="Abort — skip the AUR stage" \
       "Greenlight the scanned AUR updates? The rest of the omarchy update continues after this."; then
-      echo -e "\e[1;31mAborted by you — the AUR stage is skipped.\e[0m"
-      : > "$PENDING_AUR_FILE"
-      : > "$SCANNED_AUR_FILE"
+      echo -e "\e[1;31mAUR stage skipped by you — the repo selection below still updates.\e[0m"
+      save_repo_only "${kept_repo[@]}"
       return 0
     fi
   else
@@ -212,8 +222,7 @@ guard_update() {
 
   printf '%s\n' "${kept_repo[@]:-}" | sed '/^$/d' | sort -u > "$PENDING_REPO_FILE"
   printf '%s\n' "${kept_aur[@]:-}"  | sed '/^$/d' | sort -u > "$PENDING_AUR_FILE"
-  # Stamp the reviewed AUR set: the shadow stage refuses to install anything
-  # that is not on this list (it changed after review).
+  # Stamp the reviewed set; the shadow refuses anything not on this list.
   cp "$PENDING_AUR_FILE" "$SCANNED_AUR_FILE"
   echo -e "\e[32m\nSelection saved — the update phase will install ${#kept_arr[@]} package(s).\e[0m"
   return 0

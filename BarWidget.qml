@@ -4,12 +4,8 @@ import Quickshell.Io
 import qs.Ui
 import qs.Commons
 
-// OmaShield — bar entry.
-//
-// One shield glyph that opens the OmaShield popup. The panel owns the live
-// status (it keeps process work out of the bar side of the contract), and the
-// bar widget reads its state back through the loader so the icon reflects ON
-// vs OFF without starting another probe itself.
+// OmaShield bar entry: shield glyph opening the popup. Status is projected
+// from the loaded panel so the bar itself never probes.
 
 BarWidget {
   id: root
@@ -24,9 +20,8 @@ BarWidget {
     if ("hostWidget" in target) target.hostWidget = root
   }
 
-  // ---- Shape contract for shell.summon/hide/toggle routing.
+  // Shape contract for shell.summon/hide/toggle routing.
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
-  // Projected from the loaded panel so the bar glyph never starts a probe.
   readonly property bool shieldOn: panelLoader.item ? panelLoader.item.shieldOn === true : true
 
   function open() {
@@ -45,8 +40,7 @@ BarWidget {
     if (panelLoader.item && panelLoader.item.reload) panelLoader.item.reload()
   }
 
-  // Forwarded so this widget can stand in for the panel as the bar's popout
-  // identity (KeyboardPanel reads popoutSwitchClosing off its owner).
+  // Popout identity forwarded so the widget can stand in for the panel.
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
 
   function closeForPopoutSwitch() {
@@ -87,8 +81,7 @@ BarWidget {
     bar: root.bar
     text: root.shieldOn ? "\uDB81\uDD65" : "\uF512"
     tooltipText: root.shieldOn ? "OmaShield — ON" : "OmaShield — OFF"
-    // Off shields the icon: dimmed and tinted with the urgent colour so a
-    // glance at the bar answers "am I protected?" as clearly as the popup.
+    // Dimmed + tinted while OFF so the bar answers "am I protected?".
     opacity: root.shieldOn ? 1 : 0.55
     active: !root.shieldOn
 

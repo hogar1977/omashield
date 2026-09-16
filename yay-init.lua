@@ -1,33 +1,12 @@
--- ~/.config/yay/init.lua
--- OmaShield — yay v13 native guard hooks (managed by OmaShield).
---
--- Registered in yay >= 13.0 via ~/.config/yay/init.lua. This file combines:
---   * yay-guard  (aur_audit.py) — heuristics + AUR metadata verdict; blocks
---     high/critical on install, excludes risky packages from upgrades.
---   * aur-scan   (aur-scan) — static pattern review of each downloaded
---     PKGBUILD before it is built.
---
--- Behaviour is governed by OmaShield's state file, so the panel's ON/OFF
--- switch works for the native hooks too:
---   * enabled=1   -> hooks run (yay is guarded on every invocation).
---   * enabled=0   -> no hooks are registered (yay behaves like stock).
---
--- Emergency bypass: OMASHIELD_OFF=1 (legacy AUR_SHIELD_OFF=1, or yay-guard's
--- AUR_AUDIT_OFF=1) disables these hooks for a single command. This file is
--- installed by OmaShield's first-ON wiring; the marker line "OmaShield"
--- above lets uninstall recognise and remove it safely (the pre-rename
--- "AUR Shield" marker is honoured the same way).
+-- OmaShield — yay v13 guard hooks (yay-guard verdict + aur-scan review).
+-- Governed by the shield state file (enabled=1 runs, enabled=0 registers
+-- nothing). Bypass one command with OMASHIELD_OFF=1 (or yay-guard's
+-- AUR_AUDIT_OFF=1). Uninstall recognises this file by the marker above.
 
 yay.log.debug("omashield: init.lua loaded")
 
------------------------------------------------------------ OmaShield state
-
 local state_f = io.open(os.getenv("HOME") .. "/.config/omashield/state", "r")
-if not state_f then
-  -- Pre-rename state location (dalibor.aur-shield era).
-  state_f = io.open(os.getenv("HOME") .. "/.config/aur-shield/state", "r")
-end
-local shield_on = true  -- default ON: absent state file still protects
+local shield_on = true  -- absent state file still protects
 if state_f then
   for line in state_f:lines() do
     if line:match("^enabled=0$") then shield_on = false end
@@ -37,13 +16,10 @@ end
 
 if not shield_on
    or os.getenv("OMASHIELD_OFF") == "1"
-   or os.getenv("AUR_SHIELD_OFF") == "1"
    or os.getenv("AUR_AUDIT_OFF") == "1" then
   yay.log.info("omashield: OFF — hooks not registered (yay behaves as stock)")
   return
 end
-
------------------------------------------------------------ binary locations
 
 -- Locate the yay-guard audit engine wherever the package installed it.
 local audit_bin = nil
@@ -63,10 +39,7 @@ end
 
 local PY = "python3"
 
--- When to request an AI verdict from the audit hook. "suspicious" only calls
--- the AI when heuristics/denylist already raised flags. Kept conservative
--- (heuristics + metadata only by default) so the report is deterministic and
--- offline; export AUR_AUDIT_ENGINE to enable your engine of choice.
+-- AI verdict only when heuristics already flagged something (offline default).
 local AI_MODE   = "suspicious"
 local ENGINE    = nil          -- nil = inherit AUR_AUDIT_ENGINE from env
 local FAIL_ON   = "high"
@@ -76,8 +49,6 @@ local RECENT_DAYS = 2          -- pre-exclude AUR pkgs modified this many days a
 local ALLOWLIST = {
   -- ["my-own-package"] = true,
 }
-
------------------------------------------------------------ utilities
 
 local function shquote(s)
   return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
@@ -134,9 +105,8 @@ end
 
 local BLOCKING = { critical = true, high = (FAIL_ON == "high") }
 
--- Run aur-scan over the downloaded build directory and abort on any
--- high/critical finding. Exit status is captured through a temp file because
--- gopher-lua's io.popen cannot return it directly.
+-- aur-scan over the build dir; true when high/critical findings block it.
+-- (Exit status goes through a temp file: gopher-lua's popen hides it.)
 local function aur_scan_dir(pkgbase, dir)
   local tmp = (os.getenv("TMPDIR") or "/tmp") .. "/omashield-scan"
   local cmd = "aur-scan scan " .. shquote(dir) .. " --fail-on high --no-color" ..
@@ -157,10 +127,7 @@ local function aur_scan_dir(pkgbase, dir)
   return rc:match("^[1-9]") ~= nil
 end
 
---------------------------------------------------------------- AURPreInstall
--- yay-guard verdict + aur-scan pattern review, once per package, before yay
--- shows its menus or makepkg runs anything.
-
+-- Review each package before build: yay-guard verdict, then aur-scan.
 yay.create_autocmd("AURPreInstall", {
   desc = "AUR security review before building (yay-guard + aur-scan)",
   callback = function(event)
@@ -203,10 +170,7 @@ yay.create_autocmd("AURPreInstall", {
   end,
 })
 
---------------------------------------------------------------- UpgradeSelect
--- On `yay -Syu`, exclude risky AUR packages (recently touched or a blocking
--- verdict) and continue with the rest, printing a final report.
-
+-- On `yay -Syu`: exclude risky AUR packages, continue with the rest.
 yay.create_autocmd("UpgradeSelect", {
   desc = "Audit AUR upgrades: exclude the risky ones, continue with the rest",
   callback = function(event)

@@ -1,24 +1,12 @@
 #!/bin/bash
-#
-# OmaShield — drop-in replacement for omarchy-update-aur-pkgs.
-#
-# The first-ON wiring symlinks this file from a PATH-shadow directory. When
-# the real `omarchy update` flow calls `omarchy-update-aur-pkgs` (by bare
-# name), the shadow PATH prepended by `omarchy-omashield update` makes THIS
-# command win.
-#
-# Instead of blindly upgrading every AUR package (the stock behaviour) it only
-# installs the AUR packages the user preselected in the interactive picker and
-# that survived the aur-scan + yay-guard review. The native yay hooks run
-# again here as a second layer of protection.
+# OmaShield — shadow for omarchy-update-aur-pkgs: installs only the reviewed
+# preselection (native yay hooks re-check as a second layer).
 
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 source "$(dirname "$SELF")/lib-state.sh"
-source "$(dirname "$SELF")/ensure-tools.sh"
+source "$(dirname "$SELF")/lib-gate.sh"
 
-# Never let a hiccup here abort the whole omarchy update; this stage is what
-# replaced the stock AUR stage, so a failure should be loud but contained.
-# (The caller's ERR trap in omarchy-update will still surface problems.)
+# A hiccup here must stay loud but contained, never aborting the whole update.
 
 if [[ -f $PENDING_AUR_FILE ]]; then
   mapfile -t selected < "$PENDING_AUR_FILE"
@@ -32,10 +20,7 @@ if ((${#selected[@]} == 0)); then
   exit 0
 fi
 
-# Fail closed: only install what the gate reviewed. If the pending set changed
-# after the review (hand edit, concurrent run), skip loudly instead of
-# installing unreviewed packages. No prompts here — this stage must stay safe
-# in unattended runs.
+# Fail closed: install only what the gate reviewed; skip loudly otherwise.
 if [[ -f $SCANNED_AUR_FILE ]]; then
   if ! diff -q "$SCANNED_AUR_FILE" "$PENDING_AUR_FILE" >/dev/null 2>&1; then
     echo -e "\e[1;31m\nOmaShield: the pending AUR set changed after review — skipping the AUR stage.\e[0m"
@@ -50,8 +35,13 @@ else
   exit 0
 fi
 
-if ! command -v aur-scan >/dev/null 2>&1; then
-  ensure_tools || exit 0
+# The tools are re-checked read-only: if they vanished mid-run the shield
+# switches itself OFF and this stage is skipped (never reinstalled from here).
+if ! gate_tools_ready; then
+  echo
+  tools_missing_notice
+  echo
+  exit 0
 fi
 
 echo -e "\e[32m\nUpdate selected AUR packages\e[0m"

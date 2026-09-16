@@ -56,9 +56,11 @@ OmaShield **stays OFF** until both of these are installed:
 - `aur-scanner` (provides `aur-scan`)
 - `yay-guard` (provides `aur_audit.py`)
 
-Install them through the standard procedure (Main Menu > Install > AUR,
+Install them through the standard procedure (Omarchy Menu > Install > AUR,
 or `yay -S aur-scanner yay-guard`), then switch OmaShield ON. The switch
-re-checks on every attempt and tells you what is missing.
+re-checks on every attempt and tells you what is missing. If either tool is
+removed later, the next guarded flow prints the same notice and switches
+OmaShield OFF automatically — nothing is ever reinstalled on your behalf.
 
 ## Install
 
@@ -84,6 +86,10 @@ wiring described in "Files touched".
 Middle-click the bar icon re-reads status. Keys in the popup: `toggle`,
 `u` update, `i` install, `a` audit, `esc` close.
 
+During Update, declining the AUR set (after a finding, or at greenlight)
+defers only the AUR stage — the repo picks still install. Cancelling the
+picker itself (`esc`) aborts the whole update; nothing runs.
+
 ## Files touched (all reversible via Uninstall)
 
 | Path | What |
@@ -93,9 +99,23 @@ Middle-click the bar icon re-reads status. Keys in the popup: `toggle`,
 | `~/.config/yay/init.lua` | Native guard hooks (pre-existing user file backed up as `init.lua.omashield-bak.*` first). |
 | `~/.config/omashield/` | State (`enabled=1/0`), pending selections, review stamp, PATH-shadow symlinks. |
 
-Nothing is installed system-wide; no sudo is used by the wiring itself.
-Package installs (`yay -S aur-scanner yay-guard`, and the reviewed updates)
-ask for sudo in the terminal like any stock omarchy flow.
+Nothing is installed system-wide. OmaShield scripts never handle elevation
+themselves: the single credential prompt of an update comes from the stock
+`omarchy-update` stages, and any later one from `pacman`/`yay` themselves —
+after every preselection and scan decision is made. (The guarded AUR
+installer also skips the stock `updatedb` locate refresh, a root-only step
+left to its regular schedule.)
+
+## Privilege boundary
+
+- Plugin code (QML, CLI, hooks, shadows) contains no elevation primitives:
+  no `sudo`, `pkexec`, `su`, setuid bits, or system-wide writes.
+- Elevation happens only inside programs you already trust with it: the stock
+  `omarchy-update` / `omarchy-pkg-aur-install` stages, `pacman`, and `yay`.
+- If `aur-scanner`/`yay-guard` go missing while the shield is ON, every flow
+  refuses with the message from "Hard dependencies" below and the shield
+  switches itself OFF (stock behaviour returns) instead of reinstalling
+  anything. Switch ON again after reinstalling the tools.
 
 ## Disable vs uninstall
 
@@ -107,7 +127,7 @@ ask for sudo in the terminal like any stock omarchy flow.
 
 ## Bypasses
 
-- `OMASHIELD_OFF=1` (legacy `AUR_SHIELD_OFF=1`, yay-guard's `AUR_AUDIT_OFF=1`)
+- `OMASHIELD_OFF=1` (or yay-guard's `AUR_AUDIT_OFF=1`)
   disables the hooks and the guarded flows for a single command.
 
 ## Removal (manual, without the panel)

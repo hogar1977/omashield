@@ -1,21 +1,12 @@
 #!/bin/bash
-#
-# OmaShield — guarded AUR installer (used from Install > AUR).
-#
-# The interactive picker is the same fuzzy finder omarchy ships; what changes
-# is what happens between picking and installing:
-#
-#   1. Pick AUR packages with fzf (multi-select with Tab / Space).
-#   2. aur-scan and yay-guard review every picked package.
-#   3. You greenlight (or cancel) — and only then is sudo asked and the
-#      installation started.
+# OmaShield — guarded AUR installer: fzf pick, scan both tools, greenlight,
+# then yay installs (yay handles elevation itself).
 
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib-state.sh"
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib-gate.sh"
-source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ensure-tools.sh"
 
 guard_aur_install() {
-  ensure_tools || return 1
+  require_tools || return 1
 
   # Same fzf presentation as the stock omarchy AUR picker.
   local fzf_args=(
@@ -43,7 +34,7 @@ guard_aur_install() {
 
   echo -e "\e[1;36m\nSelected AUR package(s): ${names[*]}\e[0m\n"
 
-  if ! gate_tools_ready; then ensure_tools || return 1; fi
+  require_tools || return 1
 
   if ! gate_scan "${names[@]}"; then
     echo
@@ -63,22 +54,8 @@ guard_aur_install() {
     return 1
   fi
 
-  # By this point the user greenlighted: ask for sudo, then install.
-  # The stock flow assumes this helper exists; fall back to an inline
-  # keepalive so a missing helper degrades to one sudo prompt, not a hang.
-  if command -v omarchy-sudo-keepalive >/dev/null 2>&1; then
-    source omarchy-sudo-keepalive
-  else
-    echo -e "\e[33momarchy-sudo-keepalive is missing — falling back to a plain sudo prompt.\e[0m"
-    sudo -v || return 1
-    while true; do sudo -n true; sleep 60; done 2>/dev/null &
-    local keepalive_pid=$!
-    trap "kill $keepalive_pid 2>/dev/null" RETURN
-  fi
-
+  # Greenlit: install (locate-db refresh stays on its regular schedule).
   echo "$pkg_names" | sed 's/^/aur\//' | tr '\n' ' ' | xargs yay -S --noconfirm --needed
-  sudo updatedb --prune-bind-mounts=no --add-prunepaths=/.snapshots
-  omarchy-show-done
 }
 
 # Run only when invoked directly.
