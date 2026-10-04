@@ -50,6 +50,44 @@ local ALLOWLIST = {
   -- ["my-own-package"] = true,
 }
 
+-- Explicit user force from the guarded flows. guard-install.sh and
+-- guard-update.sh record "<name> <epoch>" here when you choose "Force
+-- install anyway"; fresh entries (<= FORCE_TTL) bypass both hook layers for
+-- that package only. Everything else is still audited. Expires automatically
+-- so a past force never silently disables future protection.
+local FORCED_FILE = os.getenv("HOME") .. "/.config/omashield/forced-aur"
+local FORCE_TTL = 3600
+local forced = {}
+do
+  local ff = io.open(FORCED_FILE, "r")
+  if ff then
+    local now = os.time()
+    for line in ff:lines() do
+      local name, ts = line:match("^(%S+)%s*(%d*)$")
+      if name then
+        if ts and ts ~= "" then
+          ts = tonumber(ts)
+          if ts and (now - ts) <= FORCE_TTL then forced[name] = true end
+        else
+          forced[name] = true
+        end
+      end
+    end
+    ff:close()
+  end
+  -- One-shot per-command override: OMASHIELD_FORCE="pkg1,pkg2" or "1" for all.
+  local env_force = os.getenv("OMASHIELD_FORCE")
+  if env_force == "1" then
+    forced["*"] = true
+  elseif env_force and env_force ~= "" then
+    for n in env_force:gmatch("[^,%s]+") do forced[n] = true end
+  end
+end
+
+local function is_forced(name)
+  return forced[name] or forced["*"]
+end
+
 local function shquote(s)
   return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
 end
@@ -136,6 +174,10 @@ yay.create_autocmd("AURPreInstall", {
       yay.log.debug("omashield: in allowlist, skipping review of", base)
       return
     end
+    if is_forced(base) then
+      yay.log.warn("omashield: FORCED " .. base .. " via explicit user choice — skipping yay-guard + aur-scan for this package.")
+      return
+    end
 
     -- Layer 1: yay-guard heuristic/metadata verdict.
     if audit_bin then
@@ -180,7 +222,9 @@ yay.create_autocmd("UpgradeSelect", {
 
     local to_audit = {}
     for _, pkg in ipairs(event.data.upgrades) do
-      if pkg.repository == "aur" and not ALLOWLIST[pkg.name] then
+      if is_forced(pkg.name) then
+        yay.log.warn("omashield: FORCED " .. pkg.name .. " via explicit user choice — keeping it in the upgrade.")
+      elseif pkg.repository == "aur" and not ALLOWLIST[pkg.name] then
         if cutoff and pkg.last_modified and pkg.last_modified >= cutoff then
           excluded[pkg.name] = string.format("modified <%dd ago", RECENT_DAYS)
         else

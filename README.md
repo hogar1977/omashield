@@ -135,6 +135,11 @@ left to its regular schedule.)
 
 - `OMASHIELD_OFF=1` (or yay-guard's `AUR_AUDIT_OFF=1`)
   disables the hooks and the guarded flows for a single command.
+- Choosing **Force install anyway** in the guarded Update/Install flows
+  records those packages in `~/.config/omashield/forced-aur` for one hour,
+  so the native yay hooks let exactly those packages through on the
+  subsequent `yay -S` (everything else is still audited). No manual
+  `OMASHIELD_OFF=1` retry is needed.
 
 ## Removal (manual, without the panel)
 

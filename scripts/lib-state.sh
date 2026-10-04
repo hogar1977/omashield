@@ -19,6 +19,8 @@ PENDING_REPO_FILE="$STATE_DIR/pending-repo"   # selected repo packages
 PENDING_MISE_FILE="$STATE_DIR/pending-mise"   # selected mise tools
 SEEN_REPO_FILE="$STATE_DIR/seen-repo"         # full repo list offered in the picker
 SCANNED_AUR_FILE="$STATE_DIR/scanned-aur"     # reviewed AUR set (stage stamp)
+FORCED_AUR_FILE="$STATE_DIR/forced-aur"       # explicitly forced AUR pkgs ("<name> <epoch>" per line)
+FORCE_TTL_SEC=3600                            # forced entries stay valid for 1h
 SHADOW_DIR="$STATE_DIR/bin"                   # PATH shadow dir (update stages)
 
 EXT_MENU="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
@@ -75,6 +77,33 @@ shield_missing_deps() {
   command -v aur-scan >/dev/null 2>&1 || missing+=("aur-scanner")
   aur_audit_bin >/dev/null 2>&1 || missing+=("yay-guard")
   printf '%s\n' "${missing[@]}"
+}
+
+# Record packages as explicitly forced by the user ("Force install anyway").
+# The native yay hooks read this file and skip both layers for fresh entries
+# only, so a force choice in the guarded flows actually installs. Entries
+# expire after $FORCE_TTL_SEC so a past force never silently disables future
+# protection. Prunes expired entries on every write. Never fails.
+shield_force_record() {
+  (($# == 0)) && return 0
+  local now tmp p
+  now=$(date +%s 2>/dev/null || printf '0')
+  tmp=$(mktemp) || return 0
+  if [[ -f $FORCED_AUR_FILE ]]; then
+    awk -v now="$now" -v ttl="$FORCE_TTL_SEC" \
+      '$2 ~ /^[0-9]+$/ { if (now - $2 <= ttl) print }' \
+      "$FORCED_AUR_FILE" > "$tmp" 2>/dev/null || true
+  else
+    : > "$tmp"
+  fi
+  for p in "$@"; do
+    [[ -n $p ]] || continue
+    grep -v "^${p} " "$tmp" > "$tmp.new" 2>/dev/null || true
+    mv "$tmp.new" "$tmp"
+    printf '%s %s\n' "$p" "$now" >> "$tmp"
+  done
+  mkdir -p "$STATE_DIR"
+  mv "$tmp" "$FORCED_AUR_FILE"
 }
 
 # Whether the bar widget is enabled: "true", "false", or "unknown".

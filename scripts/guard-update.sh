@@ -243,6 +243,9 @@ guard_update() {
         --negative="Skip the AUR stage" \
         "High/critical findings were reported above. What should OmaShield do?"; then
         echo -e "\e[33mForcing the risky AUR update(s) — your explicit choice.\e[0m"
+        # Propagate the force to the native yay hooks (the shadow AUR stage
+        # runs `yay -S` later and would otherwise block/exclude these again).
+        shield_force_record "${kept_aur[@]}"
       else
         echo -e "\e[1;31mAUR stage skipped — the repo selection below still updates.\e[0m"
         save_repo_only "${kept_repo[@]}"

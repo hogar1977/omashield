@@ -134,6 +134,13 @@ cmd_update() {
   fi
 
   # Shadow PATH makes the guarded stages win inside the stock update.
+  # Self-heal: routing was last wired on the ON toggle, so a newer shadow
+  # may not be linked yet — rewiring is idempotent, then re-check.
+  if [[ ! -x $SHADOW_DIR/omarchy-update-aur-pkgs \
+     || ! -x $SHADOW_DIR/omarchy-update-system-pkgs \
+     || ! -x $SHADOW_DIR/omarchy-update-mise ]]; then
+    shield_ensure_routing
+  fi
   if [[ -x $SHADOW_DIR/omarchy-update-aur-pkgs \
      && -x $SHADOW_DIR/omarchy-update-system-pkgs \
      && -x $SHADOW_DIR/omarchy-update-mise ]]; then

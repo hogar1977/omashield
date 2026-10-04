@@ -46,6 +46,10 @@ guard_aur_install() {
       return 1
     fi
     echo -e "\e[33mForcing the risky package(s) — your explicit choice.\e[0m"
+    # Propagate the force to the native yay hooks (they re-audit on `yay -S`
+    # and would otherwise block the same packages again). Fresh entries only;
+    # everything else is still audited.
+    shield_force_record "${names[@]}"
   fi
 
   echo
